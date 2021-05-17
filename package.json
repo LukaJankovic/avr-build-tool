@@ -10,18 +10,21 @@
     "Other"
   ],
   "activationEvents": [
-    "onCommand:avr-build-tool.build"
+    "onCommand:avr-build-tool.build",
+    "onCommand:avr-build-tool.send"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "avr-build-tool.build",
-        "title": "AVR Build"
+        "category": "AVR",
+        "title": "Build"
       },
       {
         "command": "avr-build-tool.send",
-        "title": "AVR Send to arduino"
+        "category": "AVR",
+        "title": "Send to arduino"
       }
     ]
   },

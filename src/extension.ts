@@ -1,88 +1,181 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
-import { TextEncoder } from 'util';
+import { TextDecoder, TextEncoder } from 'util';
+import { getHeapSnapshot } from 'v8';
 import * as vscode from 'vscode';
 
-// this method is called when your extension is activated
-// your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
-
-	/*
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "avr-build-tool" is now active!');
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	let disposable = vscode.commands.registerCommand('avr-build-tool.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from AVR Build Tool!');
-	});
-
-	context.subscriptions.push(disposable);
-	*/
-	var term: vscode.Terminal;
-	var buildSrcPath: vscode.Uri;
-	var buildOutPath: vscode.Uri;
-
-	let avrBuild = vscode.commands.registerCommand('avr-build-tool.build', () => {
-		vscode.window.showInputBox({ title: "Enter avra includedir (Get default from avra --help)" }).then(async path => {
-			try {
-				let files = new Array();
-
-				for (const [name, type] of await vscode.workspace.fs.readDirectory(vscode.Uri.parse(String(path)))) {
-					files.push(name);
+	let prefs = {
+			"libPath": "",
+			"libDevice": "",
+			"deviceName": "",
+			"devicePath": "",
+			"baudRate": ""
 				};
 
-				vscode.window.showQuickPick(files).then(device => {
-					let src = vscode.window.activeTextEditor?.document.fileName.split('.')[0].split('/').slice(-1);
-					console.log(src);
-					var path;
+	var term: vscode.Terminal;
+	var src: string;
+	var buildSrcPath: vscode.Uri; 
+	var buildOutPath: vscode.Uri;
 
-					if (vscode.workspace.workspaceFolders !== undefined) {
-						path = vscode.workspace.workspaceFolders[0].uri;
-					} else {
-						vscode.window.showErrorMessage('Unable to retrieve workspace path');
-						return;
-					}
+	function getPath() {
+		var path: vscode.Uri;
 
-					vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(path, '.vscode', 'avr.build'));
+		if (vscode.workspace.workspaceFolders !== undefined) {
+			path = vscode.workspace.workspaceFolders[0].uri;
+		} else {
+			vscode.window.showErrorMessage('Unable to retrieve workspace path');
+			path = vscode.Uri.parse('');
+		}
 
-					let enc = new TextEncoder();
-					let content = enc.encode('.include \"'+device+'\"\n.include \"'+src+'.asm\"');
-					buildSrcPath = vscode.Uri.joinPath(path, '.vscode', 'avr.build', src + '-build.asm');
-					buildOutPath = vscode.Uri.joinPath(path, '.vscode', 'avr.build', src + '-build.hex');
-					vscode.workspace.fs.writeFile(buildSrcPath, content);
+		return path;
+	}
 
-					if (!term)
-						term = vscode.window.createTerminal();
+	async function getPrefs() {
+		let path = getPath();
+		let settingsPath = vscode.Uri.joinPath(path, '.vscode', 'avrbuild.json');
+		let data = vscode.workspace.fs.readFile(settingsPath);
+		prefs = JSON.parse(new TextDecoder().decode(await data));
 
-					term.sendText('avra ' + buildSrcPath.fsPath);
-				})
-			} catch (err) {
-				vscode.window.showErrorMessage('Invalid includedir path!');
-			};
+		if (prefs == undefined) {
+			prefs = {
+				"libPath": "",
+				"libDevice": "",
+				"deviceName": "",
+				"devicePath": "",
+				"baudRate": ""
+					};
+			savePrefs();
+		}
+	}
+
+	function savePrefs() {
+		let path = getPath();
+		let settingsPath = vscode.Uri.joinPath(path, '.vscode', 'avrbuild.json');
+		let outData = JSON.stringify(prefs);
+		console.log(outData);
+		vscode.workspace.fs.writeFile(settingsPath, new TextEncoder().encode(outData));
+	}
+
+	async function showDevices() {
+
+		let files = new Array();
+		for (const [name, type] of await vscode.workspace.fs.readDirectory(vscode.Uri.parse(String(prefs['libPath'])))) {
+			files.push(name);
+		};
+
+		vscode.window.showQuickPick(files).then(device => {
+			prefs['libDevice'] = device;
+			savePrefs();
+			writeAndBuild();
 		});
-	});
+	}
 
-	let avrSend = vscode.commands.registerCommand('avr-build-tool.send', () => {
-		vscode.window.showInputBox({ title: "Enter device name"}).then(name => {
+	function writeAndBuild() {
+		src = String(vscode.window.activeTextEditor?.document.fileName.split('.')[0].split('/').slice(-1));
+
+		let path = getPath();
+		vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(path, '.vscode', 'avr.build'));
+
+		let content = new TextEncoder().encode('.include \"'+prefs['libDevice']+'\"\n.include \"'+src+'.asm\"');
+		buildSrcPath = vscode.Uri.joinPath(path, '.vscode', 'avr.build', src + '-build.asm');
+		buildOutPath = vscode.Uri.joinPath(path, '.vscode', 'avr.build', src + '-build.hex');
+		vscode.workspace.fs.writeFile(buildSrcPath, content);
+
+		if (!term)
+			term = vscode.window.createTerminal();
+
+		term.sendText('avra ' + buildSrcPath.fsPath);
+	}
+
+	function buildAvr() {
+		if (!prefs['libPath']) {
+			vscode.window.showInputBox({ title: "Enter avra includedir (Get default from avra --help)" }).then(path => {
+				if (path != undefined) {
+					prefs['libPath'] = path;
+					savePrefs();
+
+					if (!prefs['libDevice']) {
+						showDevices();
+					} else {
+						writeAndBuild();
+					}
+				}
+			});
+		} else {
+			if (!prefs['libDevice']) {
+				showDevices();
+			} else {
+				writeAndBuild();
+			}
+		}
+	}
+
+	function sendCommand() {
+		if (!term)
+			term = vscode.window.createTerminal();
+
+		term.sendText("avrdude -p "+prefs['deviceName']+" -c arduino -P "+prefs['devicePath']+" -b "+prefs['baudRate']+" -U flash:w:"+buildOutPath.fsPath+":i");
+	}
+
+	function getBaudRate() {
+		if (!prefs['baudRate']) {
+			vscode.window.showInputBox({ title: "Enter baud rate", value: "115200" }).then(baud => {
+				if (baud != undefined) {
+					prefs['baudRate'] = baud;
+					savePrefs();
+				}
+				sendCommand();
+			});
+		} else {
+			sendCommand();
+		}
+	}
+
+	function getDevicePath() {
+		if (!prefs['devicePath']) {
 			vscode.window.showInputBox({ title: "Enter device path (Use Arduino IDE->Tools)" }).then(path => {
-				vscode.window.showInputBox({ title: "Enter baud rate", value: "115200" }).then(baud => {
-					if (!term)
-						term = vscode.window.createTerminal();
+				if (path != undefined) {
+					prefs['devicePath'] = path;
+					savePrefs();
+				}
+				getBaudRate();
+			});
+		} else {
+			getBaudRate();
+		}
+	}
 
-					term.sendText("avrdude -p "+name+" -c arduino -P "+path+" -b "+baud+" -U flash:w:"+buildOutPath+":i");
-				})
-			})
+	function getDeviceName() {
+		if (!prefs['deviceName']) {
+			vscode.window.showInputBox({ title: "Enter device name"}).then(name => {
+				if (name != undefined) {
+					prefs['deviceName'] = name;
+					savePrefs();
+				}
+				getDevicePath();
+			});
+		} else {
+			getDevicePath();
+		}
+	}
+
+	function pushAvr() {
+		buildAvr();
+		getDeviceName();
+	}
+
+	context.subscriptions.push(vscode.commands.registerCommand('avr-build-tool.build', () => {
+		getPrefs();
+		buildAvr();
 		})
-	})
+	);
 
-	context.subscriptions.push(avrBuild);
-	context.subscriptions.push(avrSend);
+	context.subscriptions.push(vscode.commands.registerCommand('avr-build-tool.send', () => {
+		getPrefs();
+		pushAvr();
+		})
+	);
 }
 
 // this method is called when your extension is deactivated
